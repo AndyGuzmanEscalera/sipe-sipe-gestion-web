@@ -1,0 +1,14 @@
+.env
+node_modules/
+*.log
+e2e/
+dist/
+postgres_data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+storage/
+backend/storage/
+flutter_app/.dart_tool/
+flutter_app/build/
+flutter_app/.packages

@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sipe_gestion_db
+    restart: unless-stopped
+    ports:
+      - "${GESTION_POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gestion_sipe}
+      POSTGRES_USER: ${POSTGRES_USER:-sipe_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sipe_dev_password}
+    volumes:
+      - gestion_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sipe_app} -d ${POSTGRES_DB:-gestion_sipe}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    container_name: sipe_gestion_backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sipe_app}:${POSTGRES_PASSWORD:-sipe_dev_password}@postgres:5432/${POSTGRES_DB:-gestion_sipe}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      STORAGE_ROOT: /app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - gestion_storage:/app/storage
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  gestion_postgres_data:
+  gestion_storage:
