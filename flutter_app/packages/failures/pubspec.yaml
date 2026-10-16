@@ -1,0 +1,7 @@
+name: failures
+description: Typed failures for Sipe Sipe Gestión.
+publish_to: none
+environment:
+  sdk: '>=3.4.4 <4.0.0'
+dependencies:
+  equatable: ^2.0.5

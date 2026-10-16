@@ -1,0 +1,7 @@
+name: gestion_api
+description: HTTP API client for Sipe Sipe Gestión.
+publish_to: none
+environment:
+  sdk: '>=3.4.4 <4.0.0'
+dependencies:
+  dio: ^5.7.0
