@@ -1,3 +1,7 @@
+// This panel is intentionally built for Flutter Web and opens public PDFs in a browser tab.
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
+
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -22,7 +26,8 @@ class SessionCubit extends Cubit<Map<String, dynamic>?> {
   Future<String?> login(String username, String password) async {
     final result = await repository.login(username, password);
     if (!result.isSuccess) return result.failure?.message;
-    emit(result.value);
+    final payload = result.value!;
+    emit(Map<String, dynamic>.from(payload['user'] as Map));
     return null;
   }
 
@@ -66,6 +71,12 @@ class AppShell extends StatefulWidget {
   const AppShell({super.key});
   @override
   State<AppShell> createState() => _AppShellState();
+}
+
+bool hasPermission(Map<String, dynamic> session, String permission) {
+  final permissions = (session['permissions'] as List<dynamic>? ?? [])
+      .map((value) => value.toString());
+  return permissions.contains(permission);
 }
 
 class _AppShellState extends State<AppShell> {
@@ -610,6 +621,7 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => loading = true);
     final cats = await repository.categories();
     final docs = await repository.documents();
     if (cats.isSuccess) categories = cats.value!;
@@ -619,41 +631,161 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
   }
 
   @override
-  Widget build(BuildContext context) => loading
-      ? busyOrError()
-      : Padding(
-          padding: const EdgeInsets.all(28),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              FilledButton.icon(
-                  onPressed: () => _categoryDialog(),
-                  icon: const Icon(Icons.category),
-                  label: const Text('Categorías')),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                  onPressed:
-                      categories.isEmpty ? null : () => _documentDialog(),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Nuevo documento'))
-            ]),
-            const SizedBox(height: 18),
-            Expanded(
-                child: ListView.separated(
+  Widget build(BuildContext context) {
+    if (loading) return busyOrError();
+    final session = context.watch<SessionCubit>().state!;
+    final canRead = hasPermission(session, 'gestion.gaceta.read');
+    final canManage = hasPermission(session, 'gestion.gaceta.manage');
+    final canPublish = hasPermission(session, 'gestion.gaceta.publish');
+    if (!canRead) {
+      return const Center(
+          child: Text('No tienes permisos para ver la Gaceta.'));
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          if (canManage)
+            FilledButton.icon(
+                onPressed: _categoryDialog,
+                icon: const Icon(Icons.category),
+                label: const Text('Categorías')),
+          if (canManage) const SizedBox(width: 12),
+          if (canManage)
+            FilledButton.icon(
+                onPressed: categories.isEmpty ? null : _documentDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Nuevo documento')),
+        ]),
+        const SizedBox(height: 18),
+        _GacetaHeader(),
+        const Divider(height: 1),
+        Expanded(
+            child: documents.isEmpty
+                ? const Center(child: Text('No hay documentos de Gaceta.'))
+                : ListView.separated(
                     itemCount: documents.length,
-                    separatorBuilder: (_, __) => const Divider(),
-                    itemBuilder: (_, i) {
-                      final doc = documents[i] as Map;
-                      return ListTile(
-                          title: Text('${doc['number']} · ${doc['title']}'),
-                          subtitle: Text(
-                              '${doc['category']['name']} · ${doc['published_at']}'),
-                          trailing: Chip(
-                              label: Text(doc['is_published'] == true
-                                  ? 'Publicado'
-                                  : 'Borrador')));
-                    }))
-          ]));
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) => _documentRow(documents[i] as Map,
+                        canManage: canManage, canPublish: canPublish),
+                  ))
+      ]),
+    );
+  }
+
+  Widget _documentRow(Map doc,
+      {required bool canManage, required bool canPublish}) {
+    final published = doc['is_published'] == true;
+    final pdf = doc['pdf'] as Map?;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final details =
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${doc['number']} · ${doc['title']}',
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text('${doc['category']['name']} · ${doc['published_at']}',
+              style: Theme.of(context).textTheme.bodySmall),
+        ]);
+        final status = Chip(
+          avatar: Icon(published ? Icons.public : Icons.edit_note, size: 16),
+          label: Text(published ? 'Publicado' : 'Borrador'),
+          backgroundColor:
+              published ? const Color(0xffd9f2e3) : const Color(0xfff1f1ed),
+        );
+        final actions = Wrap(spacing: 4, children: [
+          if (canManage)
+            _actionButton(
+                Icons.edit_outlined, 'Editar', () => _documentDialog(doc)),
+          if (canPublish)
+            _actionButton(
+                published ? Icons.visibility_off_outlined : Icons.publish,
+                published ? 'Despublicar' : 'Publicar',
+                () => _togglePublish(doc, !published)),
+          if (pdf != null)
+            _actionButton(Icons.picture_as_pdf_outlined, 'Abrir PDF',
+                () => html.window.open(pdf['url'] as String, '_blank')),
+          if (canManage)
+            _actionButton(
+                Icons.delete_outline, 'Eliminar', () => _deleteDocument(doc)),
+        ]);
+        if (constraints.maxWidth < 900) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                details,
+                const SizedBox(height: 8),
+                Row(children: [status, const Spacer(), actions]),
+              ]);
+        }
+        return Row(children: [
+          Expanded(flex: 4, child: details),
+          SizedBox(width: 130, child: Text(doc['category']['name'] as String)),
+          SizedBox(width: 120, child: Text(doc['published_at'] as String)),
+          SizedBox(width: 120, child: status),
+          SizedBox(width: 260, child: actions),
+        ]);
+      }),
+    );
+  }
+
+  Widget _actionButton(IconData icon, String label, VoidCallback onPressed) {
+    return Tooltip(
+      message: label,
+      child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          visualDensity: VisualDensity.compact),
+    );
+  }
+
+  Future<void> _togglePublish(Map doc, bool publish) async {
+    final result =
+        await repository.toggleDocument(doc['id'] as String, publish);
+    if (!result.isSuccess && mounted) {
+      _showMessage(result.failure!.message);
+      return;
+    }
+    await _load();
+    if (mounted) {
+      _showMessage(
+          publish ? 'Documento publicado.' : 'Documento despublicado.');
+    }
+  }
+
+  Future<void> _deleteDocument(Map doc) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eliminar documento'),
+        content: Text('¿Deseas dar de baja "${doc['title']}"?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Eliminar')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final result = await repository.deleteDocument(doc['id'] as String);
+    if (!result.isSuccess && mounted) {
+      _showMessage(result.failure!.message);
+      return;
+    }
+    await _load();
+    if (mounted) _showMessage('Documento dado de baja.');
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _categoryDialog() async {
     final name = TextEditingController();
     await showDialog(
@@ -681,17 +813,26 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                 ]));
   }
 
-  Future<void> _documentDialog() async {
+  Future<void> _documentDialog([Map? existing]) async {
     final number = TextEditingController(),
         title = TextEditingController(),
         description = TextEditingController();
-    String? category = categories.first['id'] as String?;
+    String? category = existing?['category_id'] as String? ??
+        categories.first['id'] as String?;
     PlatformFile? file;
+    final currentPdf = existing?['pdf'] as Map?;
+    if (existing != null) {
+      number.text = existing['number'] as String? ?? '';
+      title.text = existing['title'] as String? ?? '';
+      description.text = existing['description'] as String? ?? '';
+    }
     await showDialog(
         context: context,
         builder: (_) => StatefulBuilder(
             builder: (context, refresh) => AlertDialog(
-                    title: const Text('Nuevo documento de Gaceta'),
+                    title: Text(existing == null
+                        ? 'Nuevo documento de Gaceta'
+                        : 'Editar documento de Gaceta'),
                     content: SizedBox(
                         width: 460,
                         child:
@@ -718,6 +859,11 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                               controller: description,
                               decoration: decoration('Descripción')),
                           const SizedBox(height: 10),
+                          if (currentPdf != null && file == null)
+                            Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                    'PDF actual: ${currentPdf['original_filename']}')),
                           OutlinedButton.icon(
                               onPressed: () async {
                                 final result = await FilePicker.platform
@@ -730,14 +876,19 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                 }
                               },
                               icon: const Icon(Icons.upload_file),
-                              label: Text(file?.name ?? 'Seleccionar PDF'))
+                              label: Text(file == null
+                                  ? (existing == null
+                                      ? 'Seleccionar PDF'
+                                      : 'Reemplazar PDF')
+                                  : file!.name))
                         ])),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(context),
                           child: const Text('Cancelar')),
                       FilledButton(
-                          onPressed: file == null || category == null
+                          onPressed: (existing == null && file == null) ||
+                                  category == null
                               ? null
                               : () async {
                                   final data = FormData.fromMap({
@@ -745,24 +896,54 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                     'number': number.text,
                                     'title': title.text,
                                     'description': description.text,
-                                    'published_at': DateTime.now()
-                                        .toIso8601String()
-                                        .substring(0, 10),
-                                    'is_published': 'false',
-                                    'pdf': MultipartFile.fromBytes(file!.bytes!,
-                                        filename: file!.name)
+                                    'published_at':
+                                        existing?['published_at'] as String? ??
+                                            DateTime.now()
+                                                .toIso8601String()
+                                                .substring(0, 10),
+                                    'is_published':
+                                        existing?['is_published'] == true
+                                            ? 'true'
+                                            : 'false',
                                   });
+                                  if (file != null) {
+                                    data.files.add(MapEntry(
+                                        'pdf',
+                                        MultipartFile.fromBytes(file!.bytes!,
+                                            filename: file!.name)));
+                                  }
                                   final navigator = Navigator.of(context);
-                                  final result =
-                                      await repository.uploadDocument(data);
+                                  final result = await repository.uploadDocument(
+                                      data,
+                                      id: existing?['id'] as String?);
                                   if (result.isSuccess && mounted) {
                                     navigator.pop();
-                                    _load();
+                                    await _load();
+                                    _showMessage(existing == null
+                                        ? 'Documento creado.'
+                                        : 'Documento actualizado.');
+                                  } else if (mounted) {
+                                    _showMessage(result.failure?.message ??
+                                        'No se pudo guardar el documento.');
                                   }
                                 },
                           child: const Text('Guardar'))
                     ])));
   }
+}
+
+class _GacetaHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Row(children: [
+          Expanded(flex: 4, child: Text('Número / título')),
+          SizedBox(width: 130, child: Text('Categoría')),
+          SizedBox(width: 120, child: Text('Fecha')),
+          SizedBox(width: 120, child: Text('Estado')),
+          SizedBox(width: 260, child: Text('Acciones')),
+        ]),
+      );
 }
 
 class UsersPage extends StatefulWidget {
