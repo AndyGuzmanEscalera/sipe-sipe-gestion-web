@@ -10,6 +10,8 @@ import 'package:get_it/get_it.dart';
 import 'package:gestion_api/gestion_api.dart';
 import 'package:gestion_repository/gestion_repository.dart';
 
+import 'core/util/gaceta_date.dart';
+
 final getIt = GetIt.instance;
 
 void main() {
@@ -78,6 +80,8 @@ bool hasPermission(Map<String, dynamic> session, String permission) {
       .map((value) => value.toString());
   return permissions.contains(permission);
 }
+
+/// Valida una fecha en formato AAAA-MM-DD (el que espera el backend).
 
 class _AppShellState extends State<AppShell> {
   int index = 0;
@@ -786,6 +790,18 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Categorías que puede usar el documento:
+  /// - al crear: solo las activas;
+  /// - al editar: las activas más la propia, aunque esté inactiva
+  ///   (el backend acepta conservarla y solo exige que la nueva esté activa).
+  List<Map> _availableCategories(Map? existing) {
+    final currentId = existing?['category_id'] as String?;
+    return categories
+        .where((item) => item['is_active'] == true || item['id'] == currentId)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
   Future<void> _categoryDialog() async {
     final name = TextEditingController();
     await showDialog(
@@ -816,7 +832,8 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
   Future<void> _documentDialog([Map? existing]) async {
     final number = TextEditingController(),
         title = TextEditingController(),
-        description = TextEditingController();
+        description = TextEditingController(),
+        publishedAt = TextEditingController();
     String? category = existing?['category_id'] as String? ??
         categories.first['id'] as String?;
     PlatformFile? file;
@@ -826,6 +843,7 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
       title.text = existing['title'] as String? ?? '';
       description.text = existing['description'] as String? ?? '';
     }
+    publishedAt.text = initialPublishedAt(existing);
     await showDialog(
         context: context,
         builder: (_) => StatefulBuilder(
@@ -840,7 +858,7 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                           DropdownButtonFormField<String>(
                               value: category,
                               decoration: decoration('Categoría'),
-                              items: categories
+                              items: _availableCategories(existing)
                                   .map((item) => DropdownMenuItem(
                                       value: item['id'] as String,
                                       child: Text(item['name'] as String)))
@@ -858,6 +876,14 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                           TextField(
                               controller: description,
                               decoration: decoration('Descripción')),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: publishedAt,
+                            decoration: decoration('Fecha de publicación')
+                                .copyWith(
+                                    helperText: 'Formato AAAA-MM-DD',
+                                    helperMaxLines: 2),
+                          ),
                           const SizedBox(height: 10),
                           if (currentPdf != null && file == null)
                             Align(
@@ -891,16 +917,18 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                   category == null
                               ? null
                               : () async {
+                                  final dateValue = publishedAt.text.trim();
+                                  if (!isIsoDate(dateValue)) {
+                                    _showMessage(
+                                        'La fecha de publicación debe usar el formato AAAA-MM-DD.');
+                                    return;
+                                  }
                                   final data = FormData.fromMap({
                                     'category_id': category,
                                     'number': number.text,
                                     'title': title.text,
                                     'description': description.text,
-                                    'published_at':
-                                        existing?['published_at'] as String? ??
-                                            DateTime.now()
-                                                .toIso8601String()
-                                                .substring(0, 10),
+                                    'published_at': dateValue,
                                     'is_published':
                                         existing?['is_published'] == true
                                             ? 'true'
@@ -913,9 +941,9 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                             filename: file!.name)));
                                   }
                                   final navigator = Navigator.of(context);
-                                  final result = await repository.uploadDocument(
-                                      data,
-                                      id: existing?['id'] as String?);
+                                  final result =
+                                      await repository.uploadDocument(data,
+                                          id: existing?['id'] as String?);
                                   if (result.isSuccess && mounted) {
                                     navigator.pop();
                                     await _load();
