@@ -39,6 +39,15 @@ def require_permission(code: str):
         return user
     return dependency
 
+def ensure_permission(db: Session, user: User, code: str) -> None:
+    """Verifica un permiso fuera del ciclo de dependencias.
+
+    Se usa cuando la exigencia depende del contenido de la petición
+    (por ejemplo, asignar roles solo se exige si la petición los incluye).
+    """
+    if code not in user_permissions(db, user.id):
+        raise HTTPException(status_code=403, detail='Permiso insuficiente')
+
 def create_session(db: Session, user: User) -> str:
     raw, digest = generate_refresh_token()
     db.add(AuthSession(user_id=user.id, refresh_token_hash=digest, expires_at=datetime.now(timezone.utc) + timedelta(days=get_settings().refresh_token_ttl_days)))

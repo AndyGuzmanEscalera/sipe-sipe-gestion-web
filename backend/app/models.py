@@ -95,6 +95,11 @@ class Media(Base):
     uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('users.id'))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Marca el archivo como reemplazado por una versión posterior.
+    # El binario se conserva en disco para auditoría; solo deja de servirse.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Baja lógica solicitada por un administrador.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 class Mayor(Base):
     __tablename__ = 'mayors'

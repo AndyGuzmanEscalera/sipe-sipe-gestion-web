@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
-from app.auth import auth_response, create_access_token, get_current_user, login_user, refresh_user, revoke_from_request, user_response, require_permission, set_refresh_cookie, clear_refresh_cookie
+from app.auth import auth_response, create_access_token, ensure_permission, get_current_user, login_user, refresh_user, revoke_from_request, user_response, require_permission, set_refresh_cookie, clear_refresh_cookie
 from app.core.config import get_settings
 from app.core.cors import configure_cors
 from app.core.database import get_db
@@ -95,6 +95,33 @@ def media_response(row: Media | None) -> dict | None:
     if row is None:
         return None
     return {'id': str(row.id), 'original_filename': row.original_filename, 'mime_type': row.mime_type, 'size_bytes': row.size_bytes, 'sha256': row.sha256, 'kind': row.kind, 'url': media_url(row.id)}
+
+def media_admin_response(row: Media) -> dict:
+    return {
+        'id': str(row.id),
+        'original_filename': row.original_filename,
+        'mime_type': row.mime_type,
+        'size_bytes': row.size_bytes,
+        'sha256': row.sha256,
+        'kind': row.kind,
+        'storage_path': row.storage_path,
+        'url': media_url(row.id),
+        'is_active': row.is_active,
+        'superseded_at': row.superseded_at.isoformat() if row.superseded_at else None,
+        'deleted_at': row.deleted_at.isoformat() if row.deleted_at else None,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    }
+
+def supersede_media(db: Session, row: Media | None) -> None:
+    """Marca un archivo como reemplazado.
+
+    El binario NO se borra del disco: se conserva para auditoría. El archivo
+    deja de servirse públicamente porque `is_active` pasa a False.
+    """
+    if row is None or not row.is_active:
+        return
+    row.is_active = False
+    row.superseded_at = datetime.now(timezone.utc)
 
 def store_upload(upload: UploadFile, kind: str, owner_id: uuid.UUID, db: Session) -> Media:
     allowed = {'pdf': {'application/pdf'}, 'image': {'image/jpeg', 'image/png', 'image/webp'}}
@@ -205,7 +232,9 @@ def update_mayor(mayor_id: uuid.UUID, name: str = Form(''), title: str = Form(''
         raise HTTPException(404, 'Alcalde no encontrado')
     row.name, row.title, row.welcome_title, row.message, row.photo_note = name, title, welcome_title, message, photo_note
     if photo:
+        previous_photo = row.photo
         row.photo = store_upload(photo, 'image', user.id, db)
+        supersede_media(db, previous_photo)
     row.is_active = True
     db.query(Mayor).filter(Mayor.id != row.id).update({Mayor.is_active: False})
     db.commit()
@@ -322,7 +351,17 @@ def admin_gaceta_detail(document_id: uuid.UUID, user: User = Depends(require_per
 
 def save_document(*, db: Session, user: User, category_id: uuid.UUID, number: str, title: str, description: str | None, published_at: date, published: bool, pdf: UploadFile | None, row: GacetaDocument | None = None) -> GacetaDocument:
     category = db.get(GacetaCategory, category_id)
-    if category is None or not category.is_active: raise HTTPException(422, 'Categoría inexistente o inactiva')
+    if category is None:
+        raise HTTPException(422, 'Categoría inexistente')
+    # Regla de categoría inactiva:
+    #  - Documento nuevo: solo se admiten categorías activas.
+    #  - Documento existente: se puede conservar su categoría aunque esté inactiva.
+    #  - Documento existente: cambiar a otra categoría exige que la nueva esté activa.
+    if row is None:
+        if not category.is_active:
+            raise HTTPException(422, 'La categoría está inactiva; reactívela o elige otra')
+    elif category.id != row.category_id and not category.is_active:
+        raise HTTPException(422, 'La categoría está inactiva; reactívela o elige otra')
     if row is None:
         if pdf is None: raise HTTPException(422, 'El PDF es obligatorio')
         row = GacetaDocument(category_id=category_id, number=number.strip(), title=title.strip(), description=description, published_at=published_at, is_published=published, created_by_user_id=user.id, pdf=store_upload(pdf, 'pdf', user.id, db))
@@ -330,7 +369,9 @@ def save_document(*, db: Session, user: User, category_id: uuid.UUID, number: st
     else:
         row.category_id, row.number, row.title, row.description, row.published_at, row.is_published = category_id, number.strip(), title.strip(), description, published_at, published
         if pdf:
+            previous_pdf = row.pdf
             row.pdf = store_upload(pdf, 'pdf', user.id, db)
+            supersede_media(db, previous_pdf)
     db.commit(); db.refresh(row); return row
 
 @app.post('/api/admin/gaceta')
@@ -367,6 +408,91 @@ def stream_media(media_id: uuid.UUID, db: Session):
 def public_media(media_id: uuid.UUID, db: Session = Depends(get_db)):
     return stream_media(media_id, db)
 
+@app.get('/api/admin/media')
+def admin_media(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    kind: str | None = None,
+    q: str | None = None,
+    is_active: bool | None = None,
+    user: User = Depends(require_permission('gestion.media.read')),
+    db: Session = Depends(get_db),
+):
+    query = select(Media)
+    if kind:
+        query = query.where(Media.kind == kind)
+    if q:
+        query = query.where(Media.original_filename.ilike(f'%{q}%'))
+    if is_active is not None:
+        query = query.where(Media.is_active.is_(is_active))
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.scalars(query.order_by(Media.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+    return paginate([media_admin_response(x) for x in rows], total, page, page_size)
+
+@app.get('/api/admin/media/{media_id}')
+def admin_media_detail(
+    media_id: uuid.UUID,
+    user: User = Depends(require_permission('gestion.media.read')),
+    db: Session = Depends(get_db),
+):
+    row = db.get(Media, media_id)
+    if row is None:
+        raise HTTPException(404, 'Archivo no encontrado')
+    return media_admin_response(row)
+
+@app.post('/api/admin/media')
+def admin_media_upload(
+    file: UploadFile = File(...),
+    kind: str = Form('image'),
+    user: User = Depends(require_permission('gestion.media.upload')),
+    db: Session = Depends(get_db),
+):
+    if kind not in {'image', 'pdf'}:
+        raise HTTPException(422, 'Tipo de archivo inválido; use image o pdf')
+    row = store_upload(file, kind, user.id, db)
+    db.commit()
+    db.refresh(row)
+    return media_admin_response(row)
+
+@app.delete('/api/admin/media/{media_id}')
+def admin_media_deactivate(
+    media_id: uuid.UUID,
+    user: User = Depends(require_permission('gestion.media.manage')),
+    db: Session = Depends(get_db),
+):
+    """Baja lógica de un archivo.
+
+    Nunca se borra el binario del disco: la auditoría municipal requiere
+    conservar el histórico. Si el archivo está en uso por un documento de
+    Gaceta activo o por el alcalde vigente, se rechaza la operación.
+    """
+    row = db.get(Media, media_id)
+    if row is None:
+        raise HTTPException(404, 'Archivo no encontrado')
+    if not row.is_active:
+        return media_admin_response(row)
+    document = db.scalar(
+        select(GacetaDocument).where(
+            GacetaDocument.pdf_media_id == media_id,
+            GacetaDocument.deleted_at.is_(None),
+        )
+    )
+    if document is not None:
+        raise HTTPException(409, 'El archivo está asociado a un documento de Gaceta vigente')
+    mayor = db.scalar(
+        select(Mayor).where(
+            Mayor.photo_media_id == media_id,
+            Mayor.is_active.is_(True),
+        )
+    )
+    if mayor is not None:
+        raise HTTPException(409, 'El archivo está asociado al alcalde vigente')
+    row.is_active = False
+    row.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return media_admin_response(row)
+
 @app.get('/api/public/gaceta/{document_id}/pdf')
 def public_pdf(document_id: uuid.UUID, db: Session = Depends(get_db)):
     row = db.scalar(document_query(db, True).where(GacetaDocument.id == document_id))
@@ -382,6 +508,9 @@ def create_user(body: UserPayload, user: User = Depends(require_permission('gest
     from app.core.security import hash_password
     if not body.password: raise HTTPException(422, 'La contraseña es obligatoria')
     if db.scalar(select(User).where(User.username == body.username.strip().lower())): raise HTTPException(409, 'Usuario ya existente')
+    # Asignar roles exige el permiso dedicado, igual que en Correspondencia.
+    if body.role_ids:
+        ensure_permission(db, user, 'gestion.roles.assign')
     row = User(username=body.username.strip().lower(), email=str(body.email) if body.email else None, password_hash=hash_password(body.password), is_active=body.is_active)
     for role_id in body.role_ids:
         role = db.get(Role, role_id)
@@ -397,7 +526,14 @@ def update_user(user_id: uuid.UUID, body: UserPayload, user: User = Depends(requ
     row.email, row.is_active = (str(body.email) if body.email else None), body.is_active
     if body.password:
         row.password_hash = hash_password(body.password)
-    row.roles = [role for role in (db.get(Role, role_id) for role_id in body.role_ids) if role]
+    # 'role_ids' omitido no significa lista vacía: solo se reasigna si viene explícito
+    # y el conjunto cambia realmente.
+    if 'role_ids' in body.model_fields_set:
+        requested = set(body.role_ids)
+        current = {role.id for role in row.roles}
+        if requested != current:
+            ensure_permission(db, user, 'gestion.roles.assign')
+        row.roles = [role for role in (db.get(Role, role_id) for role_id in body.role_ids) if role]
     db.commit(); db.refresh(row)
     return user_response(db, row)
 
