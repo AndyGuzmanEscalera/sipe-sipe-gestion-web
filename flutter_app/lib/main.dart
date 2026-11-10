@@ -62,7 +62,7 @@ class GestionApp extends StatelessWidget {
             title: 'Sipe Sipe Gestión',
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
-                  seedColor: const Color(0xff087443),
+                  seedColor: const Color(0xff40902f),
                   brightness: Brightness.light),
               scaffoldBackgroundColor: const Color(0xfff6f8f7),
               useMaterial3: true,
@@ -94,6 +94,7 @@ class _AppShellState extends State<AppShell> {
     'Alcalde',
     'Información institucional',
     'Valores institucionales',
+    'Autoridades / Gabinete',
     'Gaceta municipal',
     'Usuarios',
     'Roles'
@@ -107,6 +108,7 @@ class _AppShellState extends State<AppShell> {
       const MayorPage(),
       const InstitutionalPage(),
       const ValuesPage(),
+      const AuthoritiesPage(),
       const GacetaPage(),
       const UsersPage(),
       const RolesPage(),
@@ -121,7 +123,7 @@ class _AppShellState extends State<AppShell> {
             leading: const Padding(
                 padding: EdgeInsets.only(bottom: 28),
                 child: Icon(Icons.account_balance,
-                    color: Color(0xff087443), size: 32)),
+                    color: Color(0xff40902f), size: 32)),
             destinations: const [
               NavigationRailDestination(
                   icon: Icon(Icons.settings_outlined),
@@ -139,6 +141,10 @@ class _AppShellState extends State<AppShell> {
                   icon: Icon(Icons.format_list_bulleted),
                   selectedIcon: Icon(Icons.format_list_bulleted),
                   label: Text('Valores')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.groups_outlined),
+                  selectedIcon: Icon(Icons.groups),
+                  label: Text('Autoridades')),
               NavigationRailDestination(
                   icon: Icon(Icons.description_outlined),
                   selectedIcon: Icon(Icons.description),
@@ -766,6 +772,205 @@ class _ValuesPageState extends AdminPageState<ValuesPage> {
                       child: const Text('Guardar'))
                 ]));
     controller.dispose();
+  }
+}
+
+class AuthoritiesPage extends StatefulWidget {
+  const AuthoritiesPage({super.key});
+  @override
+  State<AuthoritiesPage> createState() => _AuthoritiesPageState();
+}
+
+class _AuthoritiesPageState extends AdminPageState<AuthoritiesPage> {
+  List<dynamic> items = [];
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final result = await repository.authorities();
+    if (result.isSuccess) {
+      items = result.value!;
+    } else {
+      error = result.failure?.message;
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) => loading
+      ? busyOrError()
+      : Padding(
+          padding: const EdgeInsets.all(28),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                    onPressed: () => _dialog(),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Nueva autoridad'))),
+            const SizedBox(height: 18),
+            Expanded(
+                child: ListView.separated(
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const Divider(),
+                    itemBuilder: (_, i) {
+                      final item = items[i] as Map;
+                      final published = item['is_published'] == true;
+                      final active = item['is_active'] == true;
+                      return ListTile(
+                          title: Text(item['name'] as String? ?? ''),
+                          subtitle: Text(
+                              '${item['position'] ?? ''} · Orden ${item['display_order'] ?? 0}'),
+                          trailing: Wrap(
+                            spacing: 8,
+                            children: [
+                              Text(published ? 'Publicada' : 'Borrador'),
+                              Text(active ? 'Activa' : 'Inactiva'),
+                              IconButton(
+                                  tooltip: 'Editar',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: () => _dialog(existing: item)),
+                              IconButton(
+                                  tooltip: published ? 'Despublicar' : 'Publicar',
+                                  icon: Icon(published
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined),
+                                  onPressed: () => _toggle(
+                                      item['id'] as String,
+                                      published ? 'unpublish' : 'publish')),
+                            ],
+                          ));
+                    }))
+          ]));
+
+  Future<void> _toggle(String id, String action) async {
+    await run(() async {
+      final result = await repository.toggleAuthority(id, action);
+      if (!result.isSuccess) throw result.failure!.message;
+      await _load();
+    });
+  }
+
+  Future<void> _dialog({Map? existing}) async {
+    final name = ControllerFieldPro();
+    final professionalTitle = ControllerFieldPro();
+    final position = ControllerFieldPro();
+    final description = ControllerFieldPro();
+    final order = ControllerFieldPro();
+    name.setValue(existing?['name'] as String? ?? '');
+    professionalTitle.setValue(existing?['professional_title'] as String? ?? '');
+    position.setValue(existing?['position'] as String? ?? '');
+    description.setValue(existing?['description'] as String? ?? '');
+    order.setValue('${existing?['display_order'] ?? items.length}');
+    PlatformFile? photo;
+    final formKey = GlobalKey<FormState>();
+    final published = existing?['is_published'] == true;
+    var publishNow = published;
+
+    await showDialog(
+        context: context,
+        builder: (_) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+                    title: Text(existing == null
+                        ? 'Nueva autoridad'
+                        : 'Editar autoridad'),
+                    content: SingleChildScrollView(
+                      child: Form(
+                        key: formKey,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            AppTextField(
+                                controller: name,
+                                label: 'Nombre',
+                                validators: [
+                                  RequiredValid(
+                                      error: 'Indique el nombre completo.'),
+                                ]),
+                            AppTextField(
+                                controller: professionalTitle,
+                                label: 'Título profesional'),
+                            AppTextField(
+                                controller: position,
+                                label: 'Cargo',
+                                validators: [
+                                  RequiredValid(error: 'Indique el cargo.'),
+                                ]),
+                            AppTextField(
+                                controller: description,
+                                label: 'Descripción',
+                                minLines: 3,
+                                maxLines: 6),
+                            AppTextField(
+                                controller: order,
+                                label: 'Orden de visualización',
+                                validators: [
+                                  RequiredValid(error: 'Indique el orden.'),
+                                ]),
+                            const SizedBox(height: 8),
+                            Row(children: [
+                              Checkbox(
+                                  value: publishNow,
+                                  onChanged: (value) => setDialogState(
+                                      () => publishNow = value ?? false)),
+                              const Expanded(
+                                  child: Text('Publicar en el sitio web')),
+                            ]),
+                            TextButton.icon(
+                                onPressed: () async {
+                                  final picked = await FilePicker.platform
+                                      .pickFiles(type: FileType.image);
+                                  if (picked != null) {
+                                    setDialogState(
+                                        () => photo = picked.files.single);
+                                  }
+                                },
+                                icon: const Icon(Icons.photo_outlined),
+                                label: Text(photo?.name ?? 'Seleccionar foto')),
+                          ],
+                        ),
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancelar')),
+                      FilledButton(
+                          onPressed: () async {
+                            if (!formKey.currentState!.validate()) return;
+                            final displayOrder =
+                                int.tryParse(order.getValue()) ?? 0;
+                            final result = await repository.saveAuthority(
+                                id: existing?['id'] as String?,
+                                name: name.getValue(),
+                                professionalTitle: professionalTitle.getValue(),
+                                position: position.getValue(),
+                                description: description.getValue(),
+                                displayOrder: displayOrder,
+                                published: publishNow,
+                                photoBytes: photo?.bytes,
+                                photoFilename: photo?.name);
+                            if (result.isSuccess && mounted) {
+                              Navigator.pop(context);
+                              _load();
+                            } else if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content: Text(result.failure?.message ??
+                                          'No se pudo guardar la autoridad.')));
+                            }
+                          },
+                          child: const Text('Guardar'))
+                    ])));
+    name.dispose();
+    professionalTitle.dispose();
+    position.dispose();
+    description.dispose();
+    order.dispose();
   }
 }
 

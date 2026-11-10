@@ -118,11 +118,14 @@ El valor no se escribe en el código: siempre llega por variable de entorno.
 
 ## Integración con la web pública
 
-| Contenido | Mecanismo | ¿Requiere rebuild? |
+| Contenido | Mecanismo | ¿Requiere rebuild del sitio? |
 |---|---|---|
-| Gaceta (listado, PDF, bloque lateral del inicio) | Runtime: `fetch` en el navegador contra `/api/public/gaceta` | **No** |
-| Configuración, alcalde, institucional, contacto | Build-time: `fetch` en el frontmatter con respaldo | Sí |
-| Noticias, eventos, trámites, turismo, avisos, galería | Contenido estático en `src/data/*.ts` | Sí |
+| Gaceta | Runtime en el navegador → `/api/public/gaceta` | **No** |
+| Alcalde | Runtime → `/api/public/mayor` | **No** |
+| Institucional (misión, visión, valores) | Runtime → `/api/public/institutional` | **No** |
+| Autoridades / gabinete | Runtime → `/api/public/authorities` | **No** |
+| Configuración (meta parcial), contacto | Build-time en el sitio + `site-settings` | Sí |
+| Noticias, eventos, trámites, turismo, avisos, galería | Estático en `src/data/*.ts` del website | Sí |
 
 La Gaceta tiene **una sola fuente de verdad**: el bloque del inicio y la
 página `/gaceta/` consultan la misma API pública. No existen documentos de
@@ -142,9 +145,15 @@ respaldo en el sitio.
   **rechaza** la operación si el archivo está en uso por un documento de
   Gaceta vigente o por el alcalde vigente (`409`).
 
+## Autoridades / Gabinete
+
+Panel: navegación **Autoridades** (tras Valores). API admin bajo `/api/admin/authorities` y público `GET /api/public/authorities` (activas y publicadas).
+
+Migración: `gestion_0003` (tabla `authorities`).
+
 ## Permisos
 
-17 permisos con el patrón `gestion.<recurso>.<acción>`. Todos están en uso por
+19 permisos con el patrón `gestion.<recurso>.<acción>`. Todos están en uso por
 al menos un endpoint; el test `backend/tests/test_permissions_are_used.py`
 falla si algún permiso del seed queda sin uso o si un endpoint usa un permiso
 no declarado.
@@ -154,12 +163,12 @@ no declarado.
 | `gestion.settings.read` / `.manage` | Configuración del sitio |
 | `gestion.mayor.read` / `.manage` | Alcalde |
 | `gestion.institutional.read` / `.manage` | Misión, visión y valores |
+| `gestion.authorities.read` / `.manage` | Gabinete / autoridades |
 | `gestion.gaceta.read` / `.manage` / `.publish` | Gaceta y categorías |
 | `gestion.media.read` / `.upload` / `.manage` | Biblioteca de medios |
 | `gestion.users.read` / `.manage` | Usuarios |
 | `gestion.roles.read` / `.manage` | Roles y permisos |
 | `gestion.roles.assign` | Asignar roles a un usuario |
 
-`ADMIN` tiene los 17. `EDITOR` tiene 8: lectura general, Gaceta completa
-(incluido publicar) y subida de media; **no** puede modificar usuarios, roles,
-configuración crítica, alcalde ni contenido institucional.
+`ADMIN` tiene los 19. `EDITOR` puede leer y gestionar autoridades y Gaceta
+(incluido publicar) y subir media; **no** modifica usuarios ni roles.

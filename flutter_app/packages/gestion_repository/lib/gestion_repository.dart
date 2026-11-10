@@ -46,6 +46,29 @@ class GestionRepository {
           required bool active}) async =>
       _run(() => api.saveValue(
           id: id, value: value, sortOrder: sortOrder, active: active));
+  Future<Result<List<dynamic>>> authorities() async => _run(api.authorities);
+  Future<Result<Map<String, dynamic>>> saveAuthority(
+          {String? id,
+          required String name,
+          required String professionalTitle,
+          required String position,
+          required String description,
+          required int displayOrder,
+          required bool published,
+          List<int>? photoBytes,
+          String? photoFilename}) async =>
+      _run(() => api.saveAuthority(
+          id: id,
+          name: name,
+          professionalTitle: professionalTitle,
+          position: position,
+          description: description,
+          displayOrder: displayOrder,
+          published: published,
+          photoBytes: photoBytes,
+          photoFilename: photoFilename));
+  Future<Result<void>> toggleAuthority(String id, String action) async =>
+      _run(() => api.toggleAuthority(id, action));
   Future<Result<List<dynamic>>> categories() async => _run(api.categories);
   Future<Result<Map<String, dynamic>>> saveCategory(
           {String? id,

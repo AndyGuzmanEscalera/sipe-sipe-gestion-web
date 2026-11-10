@@ -94,6 +94,39 @@ class GestionApi {
         : await _dio.put('/api/admin/institutional/values/$id', data: data));
   }
 
+  Future<List<dynamic>> authorities() async =>
+      _list(await _dio.get('/api/admin/authorities'));
+
+  Future<Map<String, dynamic>> saveAuthority(
+      {String? id,
+      required String name,
+      required String professionalTitle,
+      required String position,
+      required String description,
+      required int displayOrder,
+      required bool published,
+      List<int>? photoBytes,
+      String? photoFilename}) async {
+    final data = FormData.fromMap({
+      'name': name,
+      'professional_title': professionalTitle,
+      'position': position,
+      'description': description,
+      'display_order': displayOrder,
+      'is_published': published,
+    });
+    if (photoBytes != null && photoFilename != null) {
+      data.files.add(MapEntry(
+          'photo', MultipartFile.fromBytes(photoBytes, filename: photoFilename)));
+    }
+    return _map(id == null
+        ? await _dio.post('/api/admin/authorities', data: data)
+        : await _dio.put('/api/admin/authorities/$id', data: data));
+  }
+
+  Future<void> toggleAuthority(String id, String action) async =>
+      _dio.post('/api/admin/authorities/$id/$action');
+
   Future<List<dynamic>> categories() async =>
       _list(await _dio.get('/api/admin/gaceta/categories'));
   Future<Map<String, dynamic>> saveCategory(
