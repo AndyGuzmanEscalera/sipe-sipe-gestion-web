@@ -74,8 +74,44 @@ class GestionRepository {
   Future<Result<T>> _run<T>(Future<T> Function() action) async {
     try {
       return Ok(await action());
+    } on DioException catch (error) {
+      return Err(Failure(_messageFrom(error)));
     } catch (error) {
-      return Err(Failure(error.toString()));
+      // `Err<T>` no admite `const` porque usa un parámetro de tipo.
+      // ignore: prefer_const_constructors
+      return Err<T>(
+          const Failure('Ocurrió un error inesperado. Intente nuevamente.'));
+    }
+  }
+
+  /// Traduce la respuesta de la API a un mensaje legible para el operador.
+  ///
+  /// Nunca se muestra la excepción cruda (DioException) al usuario.
+  String _messageFrom(DioException error) {
+    final data = error.response?.data;
+    if (data is Map && data['detail'] != null) {
+      final detail = data['detail'];
+      if (detail is String && detail.trim().isNotEmpty) {
+        return detail;
+      }
+      if (detail is List && detail.isNotEmpty) {
+        final first = detail.first;
+        if (first is Map && first['msg'] != null) {
+          return first['msg'].toString();
+        }
+      }
+    }
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.connectionError:
+        return 'No se pudo conectar con el servidor. Verifique la red e intente nuevamente.';
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.sendTimeout:
+        return 'El servidor tardó demasiado en responder. Intente nuevamente.';
+      case DioExceptionType.badCertificate:
+        return 'El certificado del servidor no es válido.';
+      default:
+        return 'Ocurrió un error inesperado. Intente nuevamente.';
     }
   }
 }

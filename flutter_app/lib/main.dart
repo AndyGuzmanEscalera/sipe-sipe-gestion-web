@@ -10,7 +10,11 @@ import 'package:get_it/get_it.dart';
 import 'package:gestion_api/gestion_api.dart';
 import 'package:gestion_repository/gestion_repository.dart';
 
+import 'core/util/form/controllers/controllers.dart';
+import 'core/util/form/validator_field/valid.dart';
+import 'core/util/form/validator_field/validator_field.dart';
 import 'core/util/gaceta_date.dart';
+import 'shared/widgets/form/app_text_field.dart';
 
 final getIt = GetIt.instance;
 
@@ -305,7 +309,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends AdminPageState<SettingsPage> {
-  final fields = <String, TextEditingController>{};
+  final formKey = GlobalKey<FormState>();
+  final fields = <String, ControllerFieldPro>{};
   final keys = const [
     'name',
     'shortName',
@@ -326,7 +331,7 @@ class _SettingsPageState extends AdminPageState<SettingsPage> {
   void initState() {
     super.initState();
     for (final key in keys) {
-      fields[key] = TextEditingController();
+      fields[key] = ControllerFieldPro();
     }
     _load();
   }
@@ -336,7 +341,7 @@ class _SettingsPageState extends AdminPageState<SettingsPage> {
     if (!mounted) return;
     if (result.isSuccess) {
       for (final key in keys) {
-        fields[key]!.text = result.value![key] as String? ?? '';
+        fields[key]!.setValue(result.value![key] as String? ?? '');
       }
     } else {
       error = result.failure?.message;
@@ -345,38 +350,109 @@ class _SettingsPageState extends AdminPageState<SettingsPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (loading) return busyOrError();
-    return SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              children: keys
-                  .map((key) => SizedBox(
-                      width: 360,
-                      child: TextField(
-                          controller: fields[key],
-                          decoration: decoration(_label(key)))))
-                  .toList()),
-          const SizedBox(height: 24),
-          Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton(
-                  onPressed: () => run(() async {
-                        final result = await repository.saveSettings(
-                            {for (final key in keys) key: fields[key]!.text});
-                        if (!result.isSuccess) throw result.failure!.message;
-                      }),
-                  child: const Text('Guardar configuración')))
-        ]));
+  void dispose() {
+    for (final field in fields.values) {
+      field.dispose();
+    }
+    super.dispose();
   }
 
-  String _label(String key) => key == 'shortName'
-      ? 'Nombre corto'
-      : key[0].toUpperCase() + key.substring(1);
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return busyOrError();
+    return Form(
+      key: formKey,
+      child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Wrap(
+                spacing: 16,
+                runSpacing: 16,
+                children: keys
+                    .map((key) => SizedBox(
+                        width: 360,
+                        child: AppTextField(
+                            controller: fields[key]!,
+                            label: _label(key),
+                            validators: _validators(key))))
+                    .toList()),
+            const SizedBox(height: 24),
+            Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton(
+                    onPressed: () => _save(),
+                    child: const Text('Guardar configuración')))
+          ])),
+    );
+  }
+
+  Future<void> _save() async {
+    if (!formKey.currentState!.validate()) {
+      _showFormError('Revise los campos marcados.');
+      return;
+    }
+    await run(() async {
+      final result = await repository
+          .saveSettings({for (final key in keys) key: fields[key]!.getValue()});
+      if (!result.isSuccess) throw result.failure!.message;
+    });
+    if (mounted && error == null) _showFormMessage('Configuración guardada.');
+  }
+
+  void _showFormMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showFormError(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  List<AbstractValid> _validators(String key) {
+    switch (key) {
+      case 'name':
+        return [RequiredValid(error: 'Indique el nombre oficial.')];
+      case 'shortName':
+        return [RequiredValid(error: 'Indique el nombre corto.')];
+      case 'email':
+      case 'supportEmail':
+        return [EmailValid()];
+      case 'facebook':
+      case 'instagram':
+      case 'youtube':
+        return [UrlValid()];
+      case 'motto':
+      case 'locationLine':
+      case 'phone':
+      case 'address':
+      case 'hours':
+      case 'copyright':
+      case 'edition':
+        return const [];
+      default:
+        return const [];
+    }
+  }
+
+  String _label(String key) => switch (key) {
+        'name' => 'Nombre oficial',
+        'shortName' => 'Nombre corto',
+        'motto' => 'Lema',
+        'locationLine' => 'Ubicación',
+        'email' => 'Correo',
+        'supportEmail' => 'Correo de soporte',
+        'phone' => 'Teléfono',
+        'address' => 'Dirección',
+        'hours' => 'Horario',
+        'copyright' => 'Copyright',
+        'edition' => 'Edición',
+        'facebook' => 'Facebook',
+        'instagram' => 'Instagram',
+        'youtube' => 'YouTube',
+        _ => key,
+      };
 }
 
 class MayorPage extends StatefulWidget {
@@ -386,11 +462,12 @@ class MayorPage extends StatefulWidget {
 }
 
 class _MayorPageState extends AdminPageState<MayorPage> {
-  final name = TextEditingController(),
-      title = TextEditingController(),
-      welcome = TextEditingController(),
-      message = TextEditingController(),
-      note = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  final name = ControllerFieldPro(),
+      title = ControllerFieldPro(),
+      welcome = ControllerFieldPro(),
+      message = ControllerFieldPro(),
+      note = ControllerFieldPro();
   String? mayorId;
   PlatformFile? photo;
   @override
@@ -399,17 +476,27 @@ class _MayorPageState extends AdminPageState<MayorPage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    name.dispose();
+    title.dispose();
+    welcome.dispose();
+    message.dispose();
+    note.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final result = await repository.mayor();
     if (result.isSuccess) {
       final item = result.value;
       if (item != null) {
         mayorId = item['id'] as String?;
-        name.text = item['name'] ?? '';
-        title.text = item['title'] ?? '';
-        welcome.text = item['welcome_title'] ?? '';
-        message.text = item['message'] ?? '';
-        note.text = item['photo_note'] ?? '';
+        name.setValue(item['name'] ?? '');
+        title.setValue(item['title'] ?? '');
+        welcome.setValue(item['welcome_title'] ?? '');
+        message.setValue(item['message'] ?? '');
+        note.setValue(item['photo_note'] ?? '');
       }
     } else {
       error = result.failure?.message;
@@ -420,57 +507,85 @@ class _MayorPageState extends AdminPageState<MayorPage> {
   @override
   Widget build(BuildContext context) => loading
       ? busyOrError()
-      : SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            TextField(controller: name, decoration: decoration('Nombre')),
-            const SizedBox(height: 14),
-            TextField(controller: title, decoration: decoration('Cargo')),
-            const SizedBox(height: 14),
-            TextField(
-                controller: welcome,
-                decoration: decoration('Título de bienvenida')),
-            const SizedBox(height: 14),
-            TextField(
-                controller: message,
-                minLines: 4,
-                maxLines: 8,
-                decoration: decoration('Mensaje')),
-            const SizedBox(height: 14),
-            TextField(controller: note, decoration: decoration('Nota de foto')),
-            const SizedBox(height: 14),
-            OutlinedButton.icon(
-                onPressed: () async {
-                  final result = await FilePicker.platform
-                      .pickFiles(type: FileType.image, withData: true);
-                  if (result != null && mounted) {
-                    setState(() => photo = result.files.single);
-                  }
-                },
-                icon: const Icon(Icons.image),
-                label: Text(photo?.name ?? 'Seleccionar foto')),
-            const SizedBox(height: 22),
-            FilledButton(
-                onPressed: () => _save(), child: const Text('Guardar alcalde'))
-          ]));
+      : Form(
+          key: formKey,
+          child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AppTextField(
+                        controller: name,
+                        label: 'Nombre',
+                        maxLength: 200,
+                        validators: [
+                          RequiredValid(
+                              error: 'Indique el nombre del alcalde.'),
+                        ]),
+                    AppTextField(
+                        controller: title,
+                        label: 'Cargo',
+                        maxLength: 200,
+                        validators: [
+                          RequiredValid(error: 'Indique el cargo del alcalde.'),
+                        ]),
+                    AppTextField(
+                        controller: welcome,
+                        label: 'Título de bienvenida',
+                        maxLength: 300),
+                    AppTextField(
+                        controller: message,
+                        label: 'Mensaje',
+                        minLines: 4,
+                        maxLines: 8,
+                        maxLength: 2000),
+                    AppTextField(
+                        controller: note,
+                        label: 'Nota de foto',
+                        maxLength: 500),
+                    OutlinedButton.icon(
+                        onPressed: () async {
+                          final result = await FilePicker.platform
+                              .pickFiles(type: FileType.image, withData: true);
+                          if (result != null && mounted) {
+                            setState(() => photo = result.files.single);
+                          }
+                        },
+                        icon: const Icon(Icons.image),
+                        label: Text(photo?.name ?? 'Seleccionar foto')),
+                    const SizedBox(height: 22),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilledButton(
+                            onPressed: () => _save(),
+                            child: const Text('Guardar alcalde')))
+                  ])),
+        );
+
   Future<void> _save() async {
+    if (!formKey.currentState!.validate()) {
+      _showMessage('Revise los campos marcados.');
+      return;
+    }
     final result = await repository.saveMayor(
         id: mayorId,
-        name: name.text,
-        title: title.text,
-        welcomeTitle: welcome.text,
-        message: message.text,
-        photoNote: note.text,
+        name: name.getValue(),
+        title: title.getValue(),
+        welcomeTitle: welcome.getValue(),
+        message: message.getValue(),
+        photoNote: note.getValue(),
         photoBytes: photo?.bytes,
         photoFilename: photo?.name);
     if (!result.isSuccess && mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(result.failure!.message)));
+      _showMessage(result.failure!.message);
     } else if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Alcalde guardado')));
+      _showMessage('Alcalde guardado');
     }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -481,18 +596,26 @@ class InstitutionalPage extends StatefulWidget {
 }
 
 class _InstitutionalPageState extends AdminPageState<InstitutionalPage> {
-  final mission = TextEditingController(), vision = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  final mission = ControllerFieldPro(), vision = ControllerFieldPro();
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  @override
+  void dispose() {
+    mission.dispose();
+    vision.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final result = await repository.institutional();
     if (result.isSuccess) {
-      mission.text = result.value!['mission'] ?? '';
-      vision.text = result.value!['vision'] ?? '';
+      mission.setValue(result.value!['mission'] ?? '');
+      vision.setValue(result.value!['vision'] ?? '');
     } else {
       error = result.failure?.message;
     }
@@ -502,32 +625,53 @@ class _InstitutionalPageState extends AdminPageState<InstitutionalPage> {
   @override
   Widget build(BuildContext context) => loading
       ? busyOrError()
-      : SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            TextField(
-                controller: mission,
-                minLines: 5,
-                maxLines: 10,
-                decoration: decoration('Misión')),
-            const SizedBox(height: 18),
-            TextField(
-                controller: vision,
-                minLines: 5,
-                maxLines: 10,
-                decoration: decoration('Visión')),
-            const SizedBox(height: 22),
-            Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton(
-                    onPressed: () => run(() async {
-                          final result = await repository.saveInstitutional(
-                              mission.text, vision.text);
-                          if (!result.isSuccess) throw result.failure!.message;
-                        }),
-                    child: const Text('Guardar información')))
-          ]));
+      : Form(
+          key: formKey,
+          child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AppTextField(
+                        controller: mission,
+                        label: 'Misión',
+                        minLines: 5,
+                        maxLines: 10,
+                        maxLength: 2000),
+                    AppTextField(
+                        controller: vision,
+                        label: 'Visión',
+                        minLines: 5,
+                        maxLines: 10,
+                        maxLength: 2000),
+                    const SizedBox(height: 8),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilledButton(
+                            onPressed: () => _save(),
+                            child: const Text('Guardar información')))
+                  ])),
+        );
+
+  Future<void> _save() async {
+    if (!formKey.currentState!.validate()) {
+      _showMessage('Revise los campos marcados.');
+      return;
+    }
+    await run(() async {
+      final result = await repository.saveInstitutional(
+          mission.getValue(), vision.getValue());
+      if (!result.isSuccess) throw result.failure!.message;
+    });
+    if (mounted && error == null) {
+      _showMessage('Información institucional guardada.');
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 }
 
 class ValuesPage extends StatefulWidget {
@@ -583,30 +727,45 @@ class _ValuesPageState extends AdminPageState<ValuesPage> {
                     }))
           ]));
   Future<void> _dialog() async {
-    final controller = TextEditingController();
+    final controller = ControllerFieldPro();
+    final formKey = GlobalKey<FormState>();
     await showDialog(
         context: context,
         builder: (_) => AlertDialog(
                 title: const Text('Nuevo valor'),
-                content: TextField(
-                    controller: controller, decoration: decoration('Valor')),
+                content: Form(
+                    key: formKey,
+                    child: AppTextField(
+                        controller: controller,
+                        label: 'Valor',
+                        maxLength: 500,
+                        validators: [
+                          RequiredValid(
+                              error: 'Indique el valor institucional.'),
+                        ])),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: const Text('Cancelar')),
                   FilledButton(
                       onPressed: () async {
+                        if (!formKey.currentState!.validate()) return;
                         final result = await repository.saveValue(
-                            value: controller.text,
+                            value: controller.getValue(),
                             sortOrder: items.length,
                             active: true);
                         if (result.isSuccess && mounted) {
                           Navigator.pop(context);
                           _load();
+                        } else if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(result.failure?.message ??
+                                  'No se pudo guardar el valor.')));
                         }
                       },
                       child: const Text('Guardar'))
                 ]));
+    controller.dispose();
   }
 }
 
@@ -803,47 +962,63 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
   }
 
   Future<void> _categoryDialog() async {
-    final name = TextEditingController();
+    final name = ControllerFieldPro();
+    final formKey = GlobalKey<FormState>();
     await showDialog(
         context: context,
         builder: (_) => AlertDialog(
                 title: const Text('Nueva categoría'),
-                content: TextField(
-                    controller: name, decoration: decoration('Nombre')),
+                content: Form(
+                    key: formKey,
+                    child: AppTextField(
+                        controller: name,
+                        label: 'Nombre',
+                        maxLength: 150,
+                        validators: [
+                          RequiredValid(
+                              error: 'Indique el nombre de la categoría.'),
+                        ])),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: const Text('Cancelar')),
                   FilledButton(
                       onPressed: () async {
+                        if (!formKey.currentState!.validate()) return;
                         final result = await repository.saveCategory(
-                            name: name.text,
+                            name: name.getValue(),
                             sortOrder: categories.length,
                             active: true);
                         if (result.isSuccess && mounted) {
                           Navigator.pop(context);
                           _load();
+                        } else if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(result.failure?.message ??
+                                  'No se pudo guardar la categoría.')));
                         }
                       },
                       child: const Text('Guardar'))
                 ]));
+    name.dispose();
   }
 
   Future<void> _documentDialog([Map? existing]) async {
-    final number = TextEditingController(),
-        title = TextEditingController(),
-        description = TextEditingController(),
-        publishedAt = TextEditingController();
+    final number = ControllerFieldPro(),
+        title = ControllerFieldPro(),
+        description = ControllerFieldPro(),
+        publishedAt = ControllerFieldPro();
+    final formKey = GlobalKey<FormState>();
     String? category = existing?['category_id'] as String? ??
         categories.first['id'] as String?;
     PlatformFile? file;
     final currentPdf = existing?['pdf'] as Map?;
     if (existing != null) {
-      number.text = existing['number'] as String? ?? '';
-      title.text = existing['title'] as String? ?? '';
-      description.text = existing['description'] as String? ?? '';
+      number.setValue(existing['number'] as String? ?? '');
+      title.setValue(existing['title'] as String? ?? '');
+      description.setValue(existing['description'] as String? ?? '');
     }
-    publishedAt.text = initialPublishedAt(existing);
+    publishedAt.setValue(initialPublishedAt(existing));
     await showDialog(
         context: context,
         builder: (_) => StatefulBuilder(
@@ -853,61 +1028,83 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                         : 'Editar documento de Gaceta'),
                     content: SizedBox(
                         width: 460,
-                        child:
-                            Column(mainAxisSize: MainAxisSize.min, children: [
-                          DropdownButtonFormField<String>(
-                              value: category,
-                              decoration: decoration('Categoría'),
-                              items: _availableCategories(existing)
-                                  .map((item) => DropdownMenuItem(
-                                      value: item['id'] as String,
-                                      child: Text(item['name'] as String)))
-                                  .toList(),
-                              onChanged: (value) =>
-                                  refresh(() => category = value)),
-                          TextField(
-                              controller: number,
-                              decoration: decoration('Número')),
-                          const SizedBox(height: 10),
-                          TextField(
-                              controller: title,
-                              decoration: decoration('Título')),
-                          const SizedBox(height: 10),
-                          TextField(
-                              controller: description,
-                              decoration: decoration('Descripción')),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: publishedAt,
-                            decoration: decoration('Fecha de publicación')
-                                .copyWith(
-                                    helperText: 'Formato AAAA-MM-DD',
-                                    helperMaxLines: 2),
-                          ),
-                          const SizedBox(height: 10),
-                          if (currentPdf != null && file == null)
-                            Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                    'PDF actual: ${currentPdf['original_filename']}')),
-                          OutlinedButton.icon(
-                              onPressed: () async {
-                                final result = await FilePicker.platform
-                                    .pickFiles(
-                                        type: FileType.custom,
-                                        allowedExtensions: ['pdf'],
-                                        withData: true);
-                                if (result != null) {
-                                  refresh(() => file = result.files.single);
-                                }
-                              },
-                              icon: const Icon(Icons.upload_file),
-                              label: Text(file == null
-                                  ? (existing == null
-                                      ? 'Seleccionar PDF'
-                                      : 'Reemplazar PDF')
-                                  : file!.name))
-                        ])),
+                        child: Form(
+                            key: formKey,
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  DropdownButtonFormField<String>(
+                                      value: category,
+                                      decoration: decoration('Categoría'),
+                                      validator: (value) =>
+                                          Validator.validation(
+                                              value,
+                                              [
+                                                RequiredValid(
+                                                    error:
+                                                        'Seleccione una categoría.')
+                                              ],
+                                              fieldLabel: 'Categoría'),
+                                      items: _availableCategories(existing)
+                                          .map((item) => DropdownMenuItem(
+                                              value: item['id'] as String,
+                                              child:
+                                                  Text(item['name'] as String)))
+                                          .toList(),
+                                      onChanged: (value) =>
+                                          refresh(() => category = value)),
+                                  AppTextField(
+                                      controller: number,
+                                      label: 'Número',
+                                      maxLength: 100,
+                                      validators: [
+                                        RequiredValid(
+                                            error:
+                                                'Indique el número del documento.'),
+                                      ]),
+                                  AppTextField(
+                                      controller: title,
+                                      label: 'Título',
+                                      maxLength: 500,
+                                      validators: [
+                                        RequiredValid(
+                                            error:
+                                                'Indique el título del documento.'),
+                                      ]),
+                                  AppTextField(
+                                      controller: description,
+                                      label: 'Descripción',
+                                      maxLength: 2000),
+                                  AppTextField(
+                                      controller: publishedAt,
+                                      label: 'Fecha de publicación',
+                                      helperText: 'Formato AAAA-MM-DD',
+                                      maxLength: 10,
+                                      validators: [IsoDateValid()]),
+                                  if (currentPdf != null && file == null)
+                                    Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                            'PDF actual: ${currentPdf['original_filename']}')),
+                                  OutlinedButton.icon(
+                                      onPressed: () async {
+                                        final result = await FilePicker.platform
+                                            .pickFiles(
+                                                type: FileType.custom,
+                                                allowedExtensions: ['pdf'],
+                                                withData: true);
+                                        if (result != null) {
+                                          refresh(
+                                              () => file = result.files.single);
+                                        }
+                                      },
+                                      icon: const Icon(Icons.upload_file),
+                                      label: Text(file == null
+                                          ? (existing == null
+                                              ? 'Seleccionar PDF'
+                                              : 'Reemplazar PDF')
+                                          : file!.name))
+                                ]))),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(context),
@@ -917,17 +1114,16 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                   category == null
                               ? null
                               : () async {
-                                  final dateValue = publishedAt.text.trim();
-                                  if (!isIsoDate(dateValue)) {
-                                    _showMessage(
-                                        'La fecha de publicación debe usar el formato AAAA-MM-DD.');
+                                  if (!formKey.currentState!.validate()) {
                                     return;
                                   }
+                                  final dateValue =
+                                      publishedAt.getValue().trim();
                                   final data = FormData.fromMap({
                                     'category_id': category,
-                                    'number': number.text,
-                                    'title': title.text,
-                                    'description': description.text,
+                                    'number': number.getValue(),
+                                    'title': title.getValue(),
+                                    'description': description.getValue(),
                                     'published_at': dateValue,
                                     'is_published':
                                         existing?['is_published'] == true
@@ -957,6 +1153,10 @@ class _GacetaPageState extends AdminPageState<GacetaPage> {
                                 },
                           child: const Text('Guardar'))
                     ])));
+    number.dispose();
+    title.dispose();
+    description.dispose();
+    publishedAt.dispose();
   }
 }
 
